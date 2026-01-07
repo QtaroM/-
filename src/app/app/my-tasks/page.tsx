@@ -1,6 +1,5 @@
 import { getSession } from "@/lib/auth";
 import { redirect } from "next/navigation";
-import UserTasksPage from "../users/[userId]/tasks/page";
 
 export default async function MyTasksPage() {
     const session = await getSession();
@@ -9,5 +8,6 @@ export default async function MyTasksPage() {
         redirect("/login");
     }
 
-    return <UserTasksPage params={{ userId: session.userId }} />;
+    // Redirect to user's own task page
+    redirect(`/app/users/${session.userId}/tasks`);
 }
