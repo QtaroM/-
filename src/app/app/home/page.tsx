@@ -2,6 +2,90 @@ import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import Link from "next/link";
+import { unstable_cache } from "next/cache";
+
+// Cache home data for 30 seconds
+const getHomeData = unstable_cache(
+    async (userId: string) => {
+        const now = new Date();
+        const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+
+        const [todayTasks, overdueTasks, highPriorityTasks, projects] = await Promise.all([
+            prisma.task.findMany({
+                where: {
+                    assignees: { some: { userId } },
+                    dueDate: { gte: startOfToday, lt: endOfToday },
+                    status: { not: "done" },
+                },
+                select: {
+                    id: true,
+                    title: true,
+                    projectId: true,
+                    project: { select: { name: true } },
+                },
+                orderBy: { priority: "desc" },
+                take: 10,
+            }),
+            prisma.task.findMany({
+                where: {
+                    assignees: { some: { userId } },
+                    dueDate: { lt: startOfToday },
+                    status: { not: "done" },
+                },
+                select: {
+                    id: true,
+                    title: true,
+                    dueDate: true,
+                    projectId: true,
+                },
+                orderBy: { dueDate: "asc" },
+                take: 10,
+            }),
+            prisma.task.findMany({
+                where: {
+                    assignees: { some: { userId } },
+                    priority: { gte: 4 },
+                    status: { not: "done" },
+                },
+                select: {
+                    id: true,
+                    title: true,
+                    priority: true,
+                    projectId: true,
+                    project: { select: { name: true } },
+                },
+                orderBy: { priority: "desc" },
+                take: 10,
+            }),
+            prisma.project.findMany({
+                where: {
+                    members: { some: { userId } },
+                },
+                select: {
+                    id: true,
+                    name: true,
+                    description: true,
+                    _count: {
+                        select: {
+                            tasks: {
+                                where: {
+                                    assignees: { some: { userId } },
+                                    status: { not: "done" },
+                                },
+                            },
+                        },
+                    },
+                },
+                take: 8,
+            }),
+        ]);
+
+        return { todayTasks, overdueTasks, highPriorityTasks, projects };
+    },
+    ["home-data"],
+    { revalidate: 30 }
+);
 
 export default async function HomePage() {
     const session = await getSession();
@@ -10,71 +94,7 @@ export default async function HomePage() {
         redirect("/login");
     }
 
-    const userId = session.userId;
-    const now = new Date();
-    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
-
-    // Parallel data fetching
-    const [todayTasks, overdueTasks, highPriorityTasks, projects] = await Promise.all([
-        // Today's tasks (assigned to me, due today, not done)
-        prisma.task.findMany({
-            where: {
-                assignees: { some: { userId } },
-                dueDate: {
-                    gte: startOfToday,
-                    lt: endOfToday,
-                },
-                status: { not: "done" },
-            },
-            include: {
-                project: true,
-            },
-            orderBy: { priority: "desc" },
-        }),
-        // Overdue tasks (assigned to me, due before today, not done)
-        prisma.task.findMany({
-            where: {
-                assignees: { some: { userId } },
-                dueDate: { lt: startOfToday },
-                status: { not: "done" },
-            },
-            include: {
-                project: true,
-            },
-            orderBy: { dueDate: "asc" },
-        }),
-        // High priority tasks (assigned to me, priority 4 or 5, not done)
-        prisma.task.findMany({
-            where: {
-                assignees: { some: { userId } },
-                priority: { gte: 4 },
-                status: { not: "done" },
-            },
-            include: {
-                project: true,
-            },
-            orderBy: { priority: "desc" },
-        }),
-        // My projects
-        prisma.project.findMany({
-            where: {
-                members: {
-                    some: {
-                        userId: userId,
-                    },
-                },
-            },
-            include: {
-                tasks: {
-                    where: {
-                        assignees: { some: { userId } },
-                        status: { not: "done" },
-                    },
-                },
-            },
-        }),
-    ]);
+    const { todayTasks, overdueTasks, highPriorityTasks, projects } = await getHomeData(session.userId);
 
     return (
         <div className="space-y-8">
@@ -175,7 +195,7 @@ export default async function HomePage() {
                                         {project.name.charAt(0)}
                                     </div>
                                     <span className="text-xs font-semibold bg-gray-100 text-gray-600 px-2 py-1 rounded-full">
-                                        {project.tasks.length} タスク
+                                        {project._count.tasks} タスク
                                     </span>
                                 </div>
                                 <h4 className="text-lg font-bold text-gray-900 group-hover:text-blue-600 truncate">{project.name}</h4>
@@ -185,7 +205,6 @@ export default async function HomePage() {
                             </div>
                         </Link>
                     ))}
-                    {/* Add New Project Button */}
                     <Link href="/app/projects" className="block group">
                         <div className="bg-gray-50 h-full p-5 rounded-lg border-2 border-dashed border-gray-300 flex flex-col items-center justify-center text-gray-500 hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50 transition-all min-h-[160px]">
                             <svg className="w-8 h-8 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
