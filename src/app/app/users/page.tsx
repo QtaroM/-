@@ -2,23 +2,37 @@ import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { unstable_cache } from "next/cache";
+
+const getUsersData = unstable_cache(
+    async () => {
+        return prisma.user.findMany({
+            orderBy: { name: "asc" },
+            select: {
+                id: true,
+                name: true,
+                email: true,
+                avatarUrl: true,
+                _count: {
+                    select: {
+                        taskAssignments: {
+                            where: { task: { status: { not: "done" } } }
+                        }
+                    }
+                }
+            },
+            take: 50,
+        });
+    },
+    ["users-list"],
+    { revalidate: 60 }
+);
 
 export default async function UsersPage() {
     const session = await getSession();
     if (!session) redirect("/login");
 
-    const users = await prisma.user.findMany({
-        orderBy: { name: "asc" },
-        include: {
-            _count: {
-                select: {
-                    taskAssignments: {
-                        where: { task: { status: { not: "done" } } }
-                    }
-                }
-            }
-        }
-    });
+    const users = await getUsersData();
 
     return (
         <div>

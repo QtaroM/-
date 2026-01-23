@@ -2,32 +2,49 @@ import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
 import Link from "next/link";
 import { CreateProjectModal } from "@/components/CreateProjectModal";
+import { unstable_cache } from "next/cache";
+
+const getProjectsData = unstable_cache(
+    async (userId: string) => {
+        return prisma.project.findMany({
+            where: {
+                members: { some: { userId } },
+            },
+            select: {
+                id: true,
+                name: true,
+                description: true,
+                _count: {
+                    select: {
+                        tasks: { where: { status: { not: "done" } } }
+                    }
+                },
+                members: {
+                    select: {
+                        id: true,
+                        user: {
+                            select: {
+                                name: true,
+                                avatarUrl: true,
+                            },
+                        },
+                    },
+                    take: 3
+                }
+            },
+            orderBy: { updatedAt: 'desc' },
+            take: 20,
+        });
+    },
+    ["projects-list"],
+    { revalidate: 30 }
+);
 
 export default async function ProjectsPage() {
     const session = await getSession();
     if (!session) return null;
 
-    const projects = await prisma.project.findMany({
-        where: {
-            members: {
-                some: { userId: session.userId },
-            },
-        },
-        include: {
-            _count: {
-                select: {
-                    tasks: {
-                        where: { status: { not: "done" } }
-                    }
-                }
-            },
-            members: {
-                include: { user: true },
-                take: 3
-            }
-        },
-        orderBy: { updatedAt: 'desc' }
-    });
+    const projects = await getProjectsData(session.userId);
 
     return (
         <div>

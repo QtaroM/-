@@ -2,42 +2,61 @@ import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
 import { redirect } from "next/navigation";
 import { MyTaskRow } from "@/components/MyTaskRow";
+import { unstable_cache } from "next/cache";
+
+const getUserTasksData = unstable_cache(
+    async (userId: string) => {
+        const [user, tasks] = await Promise.all([
+            prisma.user.findUnique({
+                where: { id: userId },
+                select: { id: true, name: true, avatarUrl: true },
+            }),
+            prisma.task.findMany({
+                where: { assignees: { some: { userId } } },
+                select: {
+                    id: true,
+                    title: true,
+                    description: true,
+                    status: true,
+                    priority: true,
+                    dueDate: true,
+                    projectId: true,
+                    project: { select: { id: true, name: true } },
+                    tags: {
+                        select: {
+                            tag: { select: { id: true, name: true, color: true } },
+                        },
+                    },
+                    assignees: {
+                        select: {
+                            user: { select: { id: true, name: true, avatarUrl: true } },
+                        },
+                    },
+                },
+                orderBy: { priority: "desc" },
+                take: 100,
+            }),
+        ]);
+        return { user, tasks };
+    },
+    ["user-tasks"],
+    { revalidate: 30 }
+);
 
 export default async function UserTasksPage({ params }: { params: Promise<{ userId: string }> }) {
     const session = await getSession();
     if (!session) redirect("/login");
 
     const { userId } = await params;
-
-    // Verify user exists
-    const user = await prisma.user.findUnique({
-        where: { id: userId },
-    });
+    const { user, tasks } = await getUserTasksData(userId);
 
     if (!user) {
         return <div>User not found</div>;
     }
 
-    // Fetch ALL tasks for this user (both complete and incomplete)
-    const tasks = await prisma.task.findMany({
-        where: {
-            assignees: {
-                some: { userId }
-            }
-        },
-        include: {
-            project: true,
-            tags: { include: { tag: true } },
-            assignees: { include: { user: true } },
-        },
-        orderBy: { priority: "desc" },
-    });
-
     const isMe = session.userId === userId;
-
-    // Group tasks by completion status
-    const incompleteTasks = tasks.filter((t: { status: string }) => t.status !== "done");
-    const completedTasks = tasks.filter((t: { status: string }) => t.status === "done");
+    const incompleteTasks = tasks.filter((t) => t.status !== "done");
+    const completedTasks = tasks.filter((t) => t.status === "done");
 
     return (
         <div className="h-full flex flex-col">
@@ -74,12 +93,10 @@ export default async function UserTasksPage({ params }: { params: Promise<{ user
                             </tr>
                         ) : (
                             <>
-                                {/* Incomplete Tasks */}
                                 {incompleteTasks.map((task: any) => (
                                     <MyTaskRow key={task.id} task={task} />
                                 ))}
 
-                                {/* Completed Section */}
                                 {completedTasks.length > 0 && (
                                     <>
                                         <tr className="bg-gray-100">
@@ -100,4 +117,3 @@ export default async function UserTasksPage({ params }: { params: Promise<{ user
         </div>
     );
 }
-
